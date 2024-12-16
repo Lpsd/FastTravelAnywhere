@@ -17,3 +17,12 @@ FastTravelKey = Key.Z
     Leave empty {} for no modifier keys
 --]]
 FastTravelModifierKeys = {}
+
+--[[
+    Frequency of certain script operations in milliseconds (1000 = 1 second)
+    Affects teleport processing speed. May cause performance issues and crashing if set too low.
+    If experiencing regular crashes, try increasing this value incrementally until stable.
+
+    Default: 333
+--]]
+FAST_TRAVEL_TICK_RATE = 333

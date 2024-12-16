@@ -29,14 +29,14 @@ local isTeleporting = false
 
 local WorldMapActualWidth = 816000.0
 local WorldMapActualHeight = 816000.0
-local PDAMapWidth = 32512.0
-local PDAMapHeight = 32512.0
+local PDAMapWidth = 32640.0
+local PDAMapHeight = 32640.0
 
 local CURRENT_FIND_FLOOR_ATTEMPTS = 0
 local MAX_FIND_FLOOR_ATTEMPTS = 33
 local TELEPORT_FINAL_Z_OFFSET = 10
 
-local FALLING_TERMINAL_VELOCITY = 33
+local FALLING_TERMINAL_VELOCITY = 333
 local DEFAULT_TERMINAL_VELOCITY = 4000
 
 -- Maffs
@@ -52,7 +52,7 @@ function SetupResetTrigger(MovementComponent, PhysicsVolume)
     local physicsVolume = PhysicsVolume
 
     -- Reset velocity when player lands on ground
-    LoopAsync(1, function()
+    LoopAsync(FAST_TRAVEL_TICK_RATE, function()
         if (not movementComponent) or (not movementComponent:IsValid()) then return true end
         if (not physicsVolume) or (not physicsVolume:IsValid()) then return true end
 
@@ -62,11 +62,8 @@ function SetupResetTrigger(MovementComponent, PhysicsVolume)
 
             if (FirstPlayerController) and (FirstPlayerController:IsValid()) then
                 local PlayerCameraManager = FirstPlayerController.PlayerCameraManager
-
-                ExecuteWithDelay(500, function()
-                    if (not PlayerCameraManager) or (not PlayerCameraManager:IsValid()) then return end
-                    PlayerCameraManager:SetManualCameraFade(0, {R=0, G=0, B=0, A=255}, true)
-                end)
+                if (not PlayerCameraManager) or (not PlayerCameraManager:IsValid()) then return end
+                PlayerCameraManager:SetManualCameraFade(0, {R=0, G=0, B=0, A=255}, true)
             end
 
             -- Reset terminal velocity
@@ -149,76 +146,74 @@ function Teleport(location)
     local PlayerCameraManager = FirstPlayerController.PlayerCameraManager
 
     if (PlayerCameraManager) and (PlayerCameraManager:IsValid()) then
-        PlayerCameraManager:StartCameraFade(0, 255, 1, {R=0, G=0, B=0, A=255}, true, true)
+        PlayerCameraManager:StartCameraFade(0, 255, 0, {R=0, G=0, B=0, A=255}, true, true)
     end
 
-    ExecuteWithDelay(1000, function()
-        -- Keep computing floor dist until we find a floor Z position that isn't 0
-        LoopAsync(200, function()
-            CURRENT_FIND_FLOOR_ATTEMPTS = CURRENT_FIND_FLOOR_ATTEMPTS + 1
+    -- Keep computing floor dist until we find a floor Z position that isn't 0
+    LoopAsync(FAST_TRAVEL_TICK_RATE, function()
+        CURRENT_FIND_FLOOR_ATTEMPTS = CURRENT_FIND_FLOOR_ATTEMPTS + 1
 
-            if (CURRENT_FIND_FLOOR_ATTEMPTS > MAX_FIND_FLOOR_ATTEMPTS) then
-                -- If we got here, we couldn't find a floor Z position that wasn't 0
-                print("[FastTravelAnywhere] Max floor find attempts reached, teleporting to original location\n")
+        if (CURRENT_FIND_FLOOR_ATTEMPTS > MAX_FIND_FLOOR_ATTEMPTS) then
+            -- If we got here, we couldn't find a floor Z position that wasn't 0
+            print("[FastTravelAnywhere] Max floor find attempts reached, teleporting to original location\n")
 
-                isTeleporting = false
+            isTeleporting = false
 
-                -- Keep terminal velocity low, so we don't die from falling
-                PhysicsVolume.TerminalVelocity = FALLING_TERMINAL_VELOCITY
+            -- Keep terminal velocity low, so we don't die from falling
+            PhysicsVolume.TerminalVelocity = FALLING_TERMINAL_VELOCITY
 
-                -- Reset changed properties when player lands
-                SetupResetTrigger(ModelCharacterMovementComponent, PhysicsVolume) 
+            -- Reset changed properties when player lands
+            SetupResetTrigger(ModelCharacterMovementComponent, PhysicsVolume) 
 
-                -- Ideally we want to use XTeleportTo, if we can't then use K2_TeleportTo
-                if (not CustomConsoleManagerRK) or (not CustomConsoleManagerRK:IsValid()) then
-                    Pawn:K2_TeleportTo({X=originalLocation.X, Y=originalLocation.Y, Z=originalLocation.Z}, {X=0, Y=0, Z=0})
-                    return true
-                end
-
-                CustomConsoleManagerRK:XTeleportTo(originalLocation.X, originalLocation.Y, originalLocation.Z)
+            -- Ideally we want to use XTeleportTo, if we can't then use K2_TeleportTo
+            if (not CustomConsoleManagerRK) or (not CustomConsoleManagerRK:IsValid()) then
+                Pawn:K2_TeleportTo({X=originalLocation.X, Y=originalLocation.Y, Z=originalLocation.Z}, {X=0, Y=0, Z=0})
                 return true
             end
 
-            -- Try to get the floor Z position
-            local floorResult = {}
-            local lineDistance = location.Z * 2
-            local sweepDistance = location.Z * 2
-            local sweepRadius = 100
-
-            ModelCharacterMovementComponent:K2_ComputeFloorDist({X=location.X, Y=location.Y, Z=location.Z}, lineDistance, sweepDistance, sweepRadius, floorResult)
-
-            -- No hit result? Keep trying
-            if (not floorResult) or (not floorResult.HitResult) then
-                print("[FastTravelAnywhere] No floor hit result found\n")
-                return false
-            end
-
-            local floorHitResult = floorResult.HitResult
-
-            -- No location found? Keep trying
-            if (not floorHitResult.Location) then
-                print("[FastTravelAnywhere] No floor location found \n")
-                return false
-            end
-
-            local x, y, z = floorHitResult.Location.X, floorHitResult.Location.Y, floorHitResult.Location.Z
-            print("[FastTravelAnywhere] Floor hit location: " .. x .. ", " .. y .. ", " .. z .. "\n")
-
-            -- Floor Z is nil or 0? Keep trying
-            if (not z) or (z == 0) then
-                return false
-            end
-
-            -- Set the floor Z location
-            location.Z = z
-            isTeleporting = false
-
-            -- Teleport the player to the final location
-            print("[FastTravelAnywhere] Teleporting based on floor hit result\n")
-            DoTeleport(Pawn, CustomConsoleManagerRK, PhysicsVolume, ModelCharacterMovementComponent, location)
-
+            CustomConsoleManagerRK:XTeleportTo(originalLocation.X, originalLocation.Y, originalLocation.Z)
             return true
-        end)
+        end
+
+        -- Try to get the floor Z position
+        local floorResult = {}
+        local lineDistance = location.Z * 2
+        local sweepDistance = location.Z * 2
+        local sweepRadius = 100
+
+        ModelCharacterMovementComponent:K2_ComputeFloorDist({X=location.X, Y=location.Y, Z=location.Z}, lineDistance, sweepDistance, sweepRadius, floorResult)
+
+        -- No hit result? Keep trying
+        if (not floorResult) or (not floorResult.HitResult) then
+            print("[FastTravelAnywhere] No floor hit result found\n")
+            return false
+        end
+
+        local floorHitResult = floorResult.HitResult
+
+        -- No location found? Keep trying
+        if (not floorHitResult.Location) then
+            print("[FastTravelAnywhere] No floor location found \n")
+            return false
+        end
+
+        local x, y, z = floorHitResult.Location.X, floorHitResult.Location.Y, floorHitResult.Location.Z
+        print("[FastTravelAnywhere] Floor hit location: " .. x .. ", " .. y .. ", " .. z .. "\n")
+
+        -- Floor Z is nil or 0? Keep trying
+        if (not z) or (z == 0) then
+            return false
+        end
+
+        -- Set the floor Z location
+        location.Z = z
+        isTeleporting = false
+
+        -- Teleport the player to the final location
+        print("[FastTravelAnywhere] Teleporting based on floor hit result\n")
+        DoTeleport(Pawn, CustomConsoleManagerRK, PhysicsVolume, ModelCharacterMovementComponent, location)
+
+        return true
     end)
 end
 
@@ -291,5 +286,8 @@ RegisterKeyBind(FastTravelKey, FastTravelModifierKeys, function()
     -- Teleport the player to the marker's location
     print("[FastTravelAnywhere] Attempting teleport to hovered marker\n")
     print ("[FastTravelAnywhere] Marker PDA location: " .. X .. ", " .. Y .. "\n")
-    Teleport({X=X, Y=Y})
+
+    ExecuteInGameThread(function()
+        Teleport({X=X, Y=Y})
+    end)
 end)
