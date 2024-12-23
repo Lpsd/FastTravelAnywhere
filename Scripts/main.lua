@@ -32,9 +32,7 @@ local WorldMapActualHeight = 816000.0
 local PDAMapWidth = 32640.0
 local PDAMapHeight = 32640.0
 
-local CURRENT_FIND_FLOOR_ATTEMPTS = 0
-local MAX_FIND_FLOOR_ATTEMPTS = 33
-local TELEPORT_FINAL_Z_OFFSET = 10
+local TELEPORT_FINAL_Z_OFFSET = 3
 
 local FALLING_TERMINAL_VELOCITY = 333
 local DEFAULT_TERMINAL_VELOCITY = 4000
@@ -44,41 +42,26 @@ local function remap(x, imin, imax, omin, omax)
     return (x - imin) * (omax - omin) / (imax - imin) + omin
 end
 
-function SetupResetTrigger(MovementComponent, PhysicsVolume)
-    if (not MovementComponent) or (not MovementComponent:IsValid()) then return end
-    if (not PhysicsVolume) or (not PhysicsVolume:IsValid()) then return end
+function SetupResetTrigger(physicsVolume)
+    if (not physicsVolume) or (not physicsVolume:IsValid()) then return true end
 
-    local movementComponent = MovementComponent
-    local physicsVolume = PhysicsVolume
+    -- Grab the local player controller and pawn
+    local FirstPlayerController = UEHelpers:GetPlayerController()
 
-    -- Reset velocity when player lands on ground
-    LoopAsync(FAST_TRAVEL_TICK_RATE, function()
-        if (not movementComponent) or (not movementComponent:IsValid()) then return true end
-        if (not physicsVolume) or (not physicsVolume:IsValid()) then return true end
+    if (FirstPlayerController) and (FirstPlayerController:IsValid()) then
+        local PlayerCameraManager = FirstPlayerController.PlayerCameraManager
+        if (not PlayerCameraManager) or (not PlayerCameraManager:IsValid()) then return end
+        PlayerCameraManager:SetManualCameraFade(0, {R=0, G=0, B=0, A=255}, true)
+    end
 
-        if (movementComponent:IsWalking()) then
-            -- Grab the local player controller and pawn
-            local FirstPlayerController = UEHelpers:GetPlayerController()
+    -- Reset terminal velocity
+    physicsVolume.TerminalVelocity = DEFAULT_TERMINAL_VELOCITY
 
-            if (FirstPlayerController) and (FirstPlayerController:IsValid()) then
-                local PlayerCameraManager = FirstPlayerController.PlayerCameraManager
-                if (not PlayerCameraManager) or (not PlayerCameraManager:IsValid()) then return end
-                PlayerCameraManager:SetManualCameraFade(0, {R=0, G=0, B=0, A=255}, true)
-            end
+    -- Flush level streaming and force garbage collection
+    FirstPlayerController:ClientForceGarbageCollection()
+    FirstPlayerController:ClientFlushLevelStreaming()
 
-            -- Reset terminal velocity
-            physicsVolume.TerminalVelocity = DEFAULT_TERMINAL_VELOCITY
-
-            -- Flush level streaming and force garbage collection
-            FirstPlayerController:ClientForceGarbageCollection()
-            FirstPlayerController:ClientFlushLevelStreaming()
-
-            print("[FastTravelAnywhere] Player has landed\n")
-            return true
-        end
-
-        return false
-    end)
+    print("[FastTravelAnywhere] Player has teleported\n")
 end
 
 -- Teleport({X=0, Y=0})
@@ -121,7 +104,6 @@ function Teleport(location)
     end
 
     isTeleporting = true
-    CURRENT_FIND_FLOOR_ATTEMPTS = 0
 
     -- Get our original location
     local originalLocation = Pawn:K2_GetActorLocation()
@@ -146,88 +128,64 @@ function Teleport(location)
     local PlayerCameraManager = FirstPlayerController.PlayerCameraManager
 
     if (PlayerCameraManager) and (PlayerCameraManager:IsValid()) then
-        PlayerCameraManager:StartCameraFade(0, 255, 0, {R=0, G=0, B=0, A=255}, true, true)
+        PlayerCameraManager:StartCameraFade(0, 255, 1, {R=0, G=0, B=0, A=255}, true, true)
     end
 
-    -- Keep computing floor dist until we find a floor Z position that isn't 0
-    LoopAsync(FAST_TRAVEL_TICK_RATE, function()
-        CURRENT_FIND_FLOOR_ATTEMPTS = CURRENT_FIND_FLOOR_ATTEMPTS + 1
+    ExecuteWithDelay(FAST_TRAVEL_DELAY, function()
+        ExecuteInGameThread(function()
+            -- Try to get the floor Z position
+            local floorResult = {}
+            local lineDistance = location.Z * 2
+            local sweepDistance = location.Z * 2
+            local sweepRadius = 100
 
-        if (CURRENT_FIND_FLOOR_ATTEMPTS > MAX_FIND_FLOOR_ATTEMPTS) then
-            -- If we got here, we couldn't find a floor Z position that wasn't 0
-            print("[FastTravelAnywhere] Max floor find attempts reached, teleporting to original location\n")
+            ModelCharacterMovementComponent:K2_ComputeFloorDist({X=location.X, Y=location.Y, Z=location.Z}, lineDistance, sweepDistance, sweepRadius, floorResult)
 
-            isTeleporting = false
-
-            -- Keep terminal velocity low, so we don't die from falling
-            PhysicsVolume.TerminalVelocity = FALLING_TERMINAL_VELOCITY
-
-            -- Reset changed properties when player lands
-            SetupResetTrigger(ModelCharacterMovementComponent, PhysicsVolume) 
-
-            -- Ideally we want to use XTeleportTo, if we can't then use K2_TeleportTo
-            if (not CustomConsoleManagerRK) or (not CustomConsoleManagerRK:IsValid()) then
-                Pawn:K2_TeleportTo({X=originalLocation.X, Y=originalLocation.Y, Z=originalLocation.Z}, {X=0, Y=0, Z=0})
-                return true
+            -- No hit result? Return to original location
+            if (not floorResult) or (not floorResult.HitResult) then
+                print("[FastTravelAnywhere] No floor hit result found\n")
+                DoTeleport(Pawn, CustomConsoleManagerRK, PhysicsVolume, originalLocation)
+                return
             end
 
-            CustomConsoleManagerRK:XTeleportTo(originalLocation.X, originalLocation.Y, originalLocation.Z)
-            return true
-        end
+            local floorHitResult = floorResult.HitResult
 
-        -- Try to get the floor Z position
-        local floorResult = {}
-        local lineDistance = location.Z * 2
-        local sweepDistance = location.Z * 2
-        local sweepRadius = 100
+            -- No location found? Return to original location
+            if (not floorHitResult.Location) then
+                print("[FastTravelAnywhere] No floor location found \n")
+                DoTeleport(Pawn, CustomConsoleManagerRK, PhysicsVolume, originalLocation)
+                return
+            end
 
-        ModelCharacterMovementComponent:K2_ComputeFloorDist({X=location.X, Y=location.Y, Z=location.Z}, lineDistance, sweepDistance, sweepRadius, floorResult)
+            local x, y, z = floorHitResult.Location.X, floorHitResult.Location.Y, floorHitResult.Location.Z
+            print("[FastTravelAnywhere] Floor hit location: " .. x .. ", " .. y .. ", " .. z .. "\n")
 
-        -- No hit result? Keep trying
-        if (not floorResult) or (not floorResult.HitResult) then
-            print("[FastTravelAnywhere] No floor hit result found\n")
-            return false
-        end
+            -- Floor Z is nil or 0? Return to original location
+            if (not z) or (z == 0) then
+                print("[FastTravelAnywhere] Floor Z is nil or 0\n")
+                DoTeleport(Pawn, CustomConsoleManagerRK, PhysicsVolume, originalLocation)
+                return
+            end
 
-        local floorHitResult = floorResult.HitResult
+            -- Set the floor Z location
+            location.Z = z
 
-        -- No location found? Keep trying
-        if (not floorHitResult.Location) then
-            print("[FastTravelAnywhere] No floor location found \n")
-            return false
-        end
-
-        local x, y, z = floorHitResult.Location.X, floorHitResult.Location.Y, floorHitResult.Location.Z
-        print("[FastTravelAnywhere] Floor hit location: " .. x .. ", " .. y .. ", " .. z .. "\n")
-
-        -- Floor Z is nil or 0? Keep trying
-        if (not z) or (z == 0) then
-            return false
-        end
-
-        -- Set the floor Z location
-        location.Z = z
-        isTeleporting = false
-
-        -- Teleport the player to the final location
-        print("[FastTravelAnywhere] Teleporting based on floor hit result\n")
-        DoTeleport(Pawn, CustomConsoleManagerRK, PhysicsVolume, ModelCharacterMovementComponent, location)
-
-        return true
+            -- Teleport the player to the final location
+            print("[FastTravelAnywhere] Teleporting based on floor hit result\n")
+            DoTeleport(Pawn, CustomConsoleManagerRK, PhysicsVolume, location)
+        end)
     end)
 end
 
-function DoTeleport(Pawn, CustomConsoleManagerRK, PhysicsVolume, MovementComponent, location)
+function DoTeleport(Pawn, CustomConsoleManagerRK, PhysicsVolume, location)
     -- Teleport the player to the final location
     -- Ideally we want to use CustomConsoleManagerRK:XTeleportTo, if we can't then use K2_TeleportTo
     -- TELEPORT_FINAL_Z_OFFSET offset is to ensure we don't get stuck in the floor or clip through it
     local didTeleport = false
-
-    -- Keep terminal velocity low, so we don't die from falling
-    PhysicsVolume.TerminalVelocity = FALLING_TERMINAL_VELOCITY
+    isTeleporting = false
 
     -- Reset changed properties when player lands
-    SetupResetTrigger(MovementComponent, PhysicsVolume)
+    SetupResetTrigger(PhysicsVolume)
 
     -- Attempt to teleport the player
     if (not CustomConsoleManagerRK) or (not CustomConsoleManagerRK:IsValid()) then

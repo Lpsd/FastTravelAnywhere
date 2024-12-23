@@ -19,10 +19,9 @@ FastTravelKey = Key.Z
 FastTravelModifierKeys = {}
 
 --[[
-    Frequency of certain script operations in milliseconds (1000 = 1 second)
-    Affects teleport processing speed. May cause performance issues and crashing if set too low.
-    If experiencing regular crashes, try increasing this value incrementally until stable.
+    Delay to attempt floor finding in milliseconds, after player has been relocated above the desired location
+    Lowering this value may cause floor finding to fail
 
-    Default: 333
+    Default: 2000
 --]]
-FAST_TRAVEL_TICK_RATE = 333
+FAST_TRAVEL_DELAY = 2000
